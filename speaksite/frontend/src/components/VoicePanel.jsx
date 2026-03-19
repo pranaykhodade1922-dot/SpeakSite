@@ -218,6 +218,23 @@ const VoicePanel = () => {
     }
 
     const lower = recognizedText.toLowerCase();
+    const urlMatch = recognizedText.match(/(?:open|load|go to|navigate to)\s+(.+)/i);
+    if (urlMatch) {
+      const urlPart = urlMatch[1].trim();
+      if (urlPart.includes(".") && !urlPart.includes(" ")) {
+        const url = urlPart.startsWith("http") ? urlPart : `https://${urlPart}`;
+        setTranscript(recognizedText);
+        setTranscriptDisplay({ text: recognizedText, isFinal: true });
+        setLastCommand(recognizedText);
+        setLastAction(`Loaded ${urlPart}`);
+        setLastResponse(`Loading ${urlPart}`);
+        addToLog(`Loading external URL: ${url}`, "action");
+        window.dispatchEvent(new CustomEvent("load-voice-url", { detail: { url } }));
+        void speak(`Loading ${urlPart}`);
+        return;
+      }
+    }
+
     if (
       lower.includes("what is on") ||
       lower.includes("what's on") ||

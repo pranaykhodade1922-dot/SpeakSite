@@ -34,10 +34,26 @@ export function useDOMScanner(containerId = "speaksite-demo-content") {
   const observerRef = useRef(null);
   const scanTimerRef = useRef(null);
   const lastScanRef = useRef(0);
-  const getContainer = useCallback(
-    () => (typeof document !== "undefined" ? document.getElementById(containerId) || document.body : null),
-    [containerId],
-  );
+  const getContainer = useCallback(() => {
+    if (typeof document === "undefined") {
+      return null;
+    }
+
+    const host = document.getElementById(containerId);
+    const iframe = host?.querySelector("iframe");
+    if (iframe) {
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc?.body) {
+          return iframeDoc.body;
+        }
+      } catch (error) {
+        console.log("[SpeakSite Scanner] Cross-origin iframe — cannot scan. Using main content.");
+      }
+    }
+
+    return host || document.body;
+  }, [containerId]);
 
   const scanDOM = useCallback(() => {
     const container = getContainer();
@@ -127,42 +143,75 @@ export function useDOMScanner(containerId = "speaksite-demo-content") {
     scanTimerRef.current = window.setTimeout(scanDOM, 300);
   }, [scanDOM]);
 
+  const createObserver = useCallback(
+    () =>
+      new MutationObserver((mutations) => {
+        const significant = mutations.some(
+          (mutation) =>
+            mutation.addedNodes.length > 0 ||
+            mutation.removedNodes.length > 0 ||
+            (mutation.type === "attributes" &&
+              ["hidden", "disabled", "aria-hidden", "style", "class", "aria-expanded"].includes(
+                mutation.attributeName,
+              )),
+        );
+
+        if (significant) {
+          debouncedScan();
+        }
+      }),
+    [debouncedScan],
+  );
+
   useEffect(() => {
-    const container = getContainer();
-    if (!container) {
+    if (typeof document === "undefined") {
       return undefined;
     }
 
-    scanDOM();
+    const host = document.getElementById(containerId);
+    if (!host) {
+      return undefined;
+    }
 
-    observerRef.current = new MutationObserver((mutations) => {
-      const significant = mutations.some(
-        (mutation) =>
-          mutation.addedNodes.length > 0 ||
-          mutation.removedNodes.length > 0 ||
-          (mutation.type === "attributes" &&
-            ["hidden", "disabled", "aria-hidden", "style", "class", "aria-expanded"].includes(
-              mutation.attributeName,
-            )),
-      );
-
-      if (significant) {
-        debouncedScan();
+    const attachObserver = () => {
+      const container = getContainer();
+      if (!container) {
+        return;
       }
-    });
 
-    observerRef.current.observe(container, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["hidden", "disabled", "aria-hidden", "style", "class", "aria-expanded"],
-    });
+      observerRef.current?.disconnect();
+      observerRef.current = createObserver();
+      observerRef.current.observe(container, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["hidden", "disabled", "aria-hidden", "style", "class", "aria-expanded"],
+      });
+    };
+
+    scanDOM();
+    attachObserver();
+
+    const iframe = host.querySelector("iframe");
+    let iframeTimer = 0;
+    const handleIframeLoad = () => {
+      window.clearTimeout(iframeTimer);
+      iframeTimer = window.setTimeout(() => {
+        lastScanRef.current = 0;
+        scanDOM();
+        attachObserver();
+      }, 1500);
+    };
+
+    iframe?.addEventListener("load", handleIframeLoad);
 
     return () => {
+      iframe?.removeEventListener("load", handleIframeLoad);
+      window.clearTimeout(iframeTimer);
       observerRef.current?.disconnect();
       window.clearTimeout(scanTimerRef.current);
     };
-  }, [debouncedScan, getContainer, scanDOM]);
+  }, [containerId, createObserver, getContainer, scanDOM]);
 
   const getVoiceMapSummary = useCallback(
     () =>
